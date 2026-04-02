@@ -80,7 +80,11 @@ class GraspRectangles:
                         _gr_text_to_no(p1),
                         _gr_text_to_no(p2),
                         _gr_text_to_no(p3)
-                    ])
+                    ], dtype=float)
+
+                    # Keep only valid rectangles: must be 4 corner points in (y,x)
+                    if gr.shape != (4, 2) or not np.isfinite(gr).all():
+                        continue
 
                     grs.append(GraspRectangle(gr))
 
@@ -182,16 +186,18 @@ class GraspRectangles:
         if pad_to:
            if pad_to > len(self.grs):
                a = np.concatenate((a, np.zeros((pad_to - len(self.grs), 4, 2))))
-        return a.astype(np.int)
+        return a.astype(int)
 
     @property
     def center(self):
-        """
-        Compute mean center of all GraspRectangles
-        :return: float, mean centre of all GraspRectangles
-        """
-        points = [gr.points for gr in self.grs]
-        return np.mean(np.vstack(points), axis=0).astype(np.int)
+        # Cornell images are 480x640 (y,x)
+        if len(self.grs) == 0:
+            return np.array([240, 320], dtype=int)
+
+        pts = np.asarray([gr.points for gr in self.grs], dtype=float)  # (N,4,2)
+        c = pts.reshape(-1, 2).mean(axis=0)  # (2,)
+        return c.astype(int)
+
 
 
 class GraspRectangle:
@@ -225,7 +231,7 @@ class GraspRectangle:
         """
         :return: Rectangle center point
         """
-        return self.points.mean(axis=0).astype(np.int)
+        return self.points.mean(axis=0).astype(int)
 
     @property
     def length(self):
@@ -306,14 +312,33 @@ class GraspRectangle:
         :param angle: Angle to rotate (in radians)
         :param center: Point to rotate around (e.g. image center)
         """
+        angle = float(np.asarray(angle).reshape(-1)[0]) 
+        
         R = np.array(
             [
                 [np.cos(-angle), np.sin(-angle)],
                 [-1 * np.sin(-angle), np.cos(-angle)],
-            ]
+            ],
+            dtype=float
         )
-        c = np.array(center).reshape((1, 2))
-        self.points = ((np.dot(R, (self.points - c).T)).T + c).astype(np.int)
+ 
+        # Force points to (4,2)
+        pts = np.asarray(self.points, dtype=float)
+        if pts.shape != (4, 2):
+            # Bad rectangle; do nothing rather than crash
+            return
+
+        # Force center to (1,2)
+        c = np.asarray(center, dtype=float).reshape(-1)
+        if c.size < 2:
+            return
+        c = c[:2].reshape(1, 2)
+
+       
+        self.points = ((R @ (pts - c).T).T + c).astype(int)
+
+
+
 
     def scale(self, factor):
         """
@@ -338,6 +363,8 @@ class GraspRectangle:
         :param factor: Zoom factor
         :param center: Zoom zenter (focus point, e.g. image center)
         """
+        factor = float(np.asarray(factor).reshape(-1)[0])
+        
         T = np.array(
             [
                 [1/factor, 0],
@@ -345,7 +372,7 @@ class GraspRectangle:
             ]
         )
         c = np.array(center).reshape((1, 2))
-        self.points = ((np.dot(T, (self.points - c).T)).T + c).astype(np.int)
+        self.points = ((np.dot(T, (self.points - c).T)).T + c).astype(int)
 
 
 class Grasp:
@@ -379,7 +406,7 @@ class Grasp:
              [y2 + self.width/2 * xo, x2 + self.width/2 * yo],
              [y1 + self.width/2 * xo, x1 + self.width/2 * yo],
              ]
-        ).astype(np.float))
+        ).astype(float))
 
     def max_iou(self, grs):
         """

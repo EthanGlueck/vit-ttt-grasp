@@ -78,9 +78,18 @@ class Image:
         :param angle: Angle (in radians) to rotate by.
         :param center: Center pixel to rotate if specified, otherwise image center is used.
         """
+        angle = float(np.asarray(angle).reshape(-1)[0])  # <-- add this line
+
         if center is not None:
             center = (center[1], center[0])
-        self.img = rotate(self.img, angle/np.pi*180, center=center, mode='symmetric', preserve_range=True).astype(self.img.dtype)
+
+        self.img = rotate(
+            self.img,
+            angle / np.pi * 180,
+            center=center,
+            mode='symmetric',
+            preserve_range=True
+        ).astype(self.img.dtype)
 
     def rotated(self, *args, **kwargs):
         """
@@ -181,7 +190,7 @@ class DepthImage(Image):
 
         # Scale to keep as float, but has to be in bounds -1:1 to keep opencv happy.
         scale = np.abs(self.img).max()
-        self.img = self.img.astype(np.float32) / scale  # Has to be float32, 64 not supported.
+        self.img = self.img.astype(np.float32) / scale  # Has to be np.float32, 64 not supported.
         self.img = cv2.inpaint(self.img, mask, 1, cv2.INPAINT_NS)
 
         # Back to original size and value range.

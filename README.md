@@ -1,92 +1,107 @@
-## When Transformer Meets Robotic Grasping: Exploits Context for Efficient Grasping Detection
+# Evaluating Test-Time Training for Vision Transformer-Based Robotic Grasp Detection
 
-PyTorch implementation of paper "When Transformer Meets Robotic Grasping:
-Exploits Context for Efficient Grasping Detection"
+PyTorch implementation for the Forschungspraktikum report "Evaluating Test-Time Training for Vision Transformer-Based Robotic Grasp Detection" at the Chair of Robotics, Artificial Intelligence and Real-Time Systems, TUM.
 
-## Visualization of the architecture
-<img src="img/grasp-transformer.png" width="500" align="middle"/>
-<br>
+This work evaluates replacing standard softmax attention with Test-Time Training (TTT) layers in a ViT-based robotic grasp detection model. A ViT-Small encoder is paired with a GR-ConvNet-style convolutional decoder and evaluated on the Cornell Grasp Dataset using depth-only input. The TTT variant substitutes all attention blocks with ViT³-style TTT layers, reducing attention complexity from O(N²) to O(N). TTT imposes overhead at small resolutions but becomes ~1.9× faster than the baseline at 1248×1248, with comparable grasp detection accuracy across both models.
 
-This code was developed with Python 3.6 on Ubuntu 16.04.  Python requirements can installed by:
+This code is built on top of [TF-Grasp](https://github.com/WangShaoSUN/grasp-transformer) by Wang et al. The data loading pipeline, training loop, loss functions, and evaluation code are retained from that repository. See acknowledgements below.
 
+---
+
+## Requirements
+
+Python 3.x. Install dependencies with:
 ```bash
 pip install -r requirements.txt
 ```
 
-## Datasets
+Developed and tested on Ubuntu with CUDA 12.2 and an NVIDIA GeForce RTX 2080 Ti.
 
-Currently, both the [Cornell Grasping Dataset](http://pr.cs.cornell.edu/grasping/rect_data/data.php),
-[Jacquard Dataset](https://jacquard.liris.cnrs.fr/) , and [GraspNet 1Billion](https://graspnet.net/datasets.html)  are supported.
+---
 
-### Cornell Grasping Dataset
-1. Download the and extract [Cornell Grasping Dataset](http://pr.cs.cornell.edu/grasping/rect_data/data.php). 
+## Dataset
 
-### Jacquard Dataset
+Download and extract the [Cornell Grasping Dataset](http://pr.cs.cornell.edu/grasping/rect_data/data.php).
 
-1. Download and extract the [Jacquard Dataset](https://jacquard.liris.cnrs.fr/).
-
-### GraspNet 1Billion dataset
-
-1. The dataset can be downloaded [here](https://graspnet.net/datasets.html).
-2. Install graspnetAPI following [here](https://graspnetapi.readthedocs.io/en/latest/install.html#install-api).
-
-   ```bash
-   pip install graspnetAPI
-   ```   
-3.  We use the setting in [here](https://github.com/ryanreadbooks/Modified-GGCNN) 
-
+---
 
 ## Training
 
-Training is done by the `main.py` script.  
+Training uses 5-fold image-wise cross-validation on the Cornell dataset, depth-only input.
 
-Some basic examples:
-
+**TTT model (ViT with TTT attention blocks):**
 ```bash
-# Train  on Cornell Dataset
-python main.py   --dataset cornell
-
-# k-fold training
-python main_k_fold.py  --dataset cornell 
-
-#  GraspNet 1
-python main_grasp_1b.py 
+python main_k_fold.py \
+  --dataset cornell \
+  --dataset-path ~/ethan/grasp-transformer/data/cornell \
+  --use-depth 1 \
+  --use-rgb 0 \
+  --image-size 784 \
+  --model vittttgrasp \
+  --epochs 50 \
+  --batch-size 2
 ```
 
-Trained models are saved in `output/models` by default, with the validation score appended.
-
-## Visualize
-Some basic examples:
+**Baseline ViT model (standard softmax attention):**
 ```bash
-# visulaize grasp rectangles
-python visualise_grasp_rectangle.py   --network your network address
-
-# visulaize heatmaps
-python visulaize_heatmaps.py  --network your network address
-
+python main_k_fold.py \
+  --dataset cornell \
+  --dataset-path ~/ethan/grasp-transformer/data/cornell \
+  --use-depth 1 \
+  --use-rgb 0 \
+  --image-size 512 \
+  --model vitgrasp \
+  --epochs 100 \
+  --batch-size 32 #Depends on image size and vram of the graphics card
 ```
 
+`--image-size` must be a multiple of 16. Resolutions above 480 require upscaling the Cornell images and are suitable for efficiency benchmarking only; accuracy results should use under 480.
 
+Trained models are saved in `output/models/` by default.
 
-## Running on a Robot
+Included in the models folder are additional models which are not discussed in the paper but can be moved into the outer folder to be tested as well for comparison.
 
-Our ROS implementation for running the grasping system see [https://github.com/USTC-ICR/SimGrasp/tree/main/SimGrasp](https://github.com/USTC-ICR/SimGrasp/tree/main/SimGrasp).
+---
 
-The original implementation for running experiments on a Kinva Mico arm can be found in the repository [https://github.com/dougsm/ggcnn_kinova_grasping](https://github.com/dougsm/ggcnn_kinova_grasping).
+## Results
 
-## Acknowledgement
-Code heavily inspired and modified from https://github.com/dougsm/ggcnn
+### Inference Time
 
-If you find this helpful, please cite
-```bash
+| Resolution | Baseline ViT (ms) | ViT-TTT (ms) | TTT / Baseline |
+|------------|-------------------|--------------|----------------|
+| 224×224    | 5.5               | 16.1         | 2.93×          |
+| 480×480    | 14.8              | 26.0         | 1.76×          |
+| 784×784    | 47.8              | 40.0         | 0.84×          |
+| 1024×1024  | 98.5              | 66.7         | 0.68×          |
+| 1248×1248  | 170.0             | 88.6         | 0.52×          |
+
+Crossover occurs between 480 and 784 pixels, consistent with the O(N) vs O(N²) complexity difference.
+
+### Grasp Detection Accuracy
+
+Image-wise IoU accuracy on Cornell Grasp Dataset, depth-only, 5-fold cross-validation. Best accuracy within 100 training epochs per fold.
+
+| Model       | 224×224 | 480×480 |
+|-------------|---------|---------|
+| ViT baseline | 85.7%  | 93.8%   |
+| ViT-TTT      | 95.1%  | 92.6%   |
+
+---
+
+## Acknowledgements
+
+This codebase is built on [TF-Grasp](https://github.com/WangShaoSUN/grasp-transformer) (Wang et al., 2022). The data loading, training loop, loss functions, and evaluation code are taken directly from that repository.
+```
 @ARTICLE{9810182,
   author={Wang, Shaochen and Zhou, Zhangli and Kan, Zhen},
-  journal={IEEE Robotics and Automation Letters}, 
-  title={When Transformer Meets Robotic Grasping: Exploits Context for Efficient Grasp Detection}, 
+  journal={IEEE Robotics and Automation Letters},
+  title={When Transformer Meets Robotic Grasping: Exploits Context for Efficient Grasp Detection},
   year={2022},
   volume={},
   number={},
   pages={1-8},
-  doi={10.1109/LRA.2022.3187261}}
-
+  doi={10.1109/LRA.2022.3187261}
+}
 ```
+
+The TTT layer implementation follows the ViT³ design from Han et al. (2025), "ViT³: Unlocking Test-Time Training in Vision," arXiv:2512.01643.

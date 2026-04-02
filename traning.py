@@ -1,33 +1,32 @@
-import torch
-import torch.utils.data
-import torch.optim as optim
-from utils.dataset_processing import evaluation
-from models.common import post_process_output
 import logging
+import time
+
+import torch
+
+from models.common import post_process_output
+from utils.dataset_processing import evaluation
+
+
 def validate(net, device, val_data, batches_per_epoch):
-    """
-    Run validation.
-    :param net: Network
-    :param device: Torch device
-    :param val_data: Validation Dataset
-    :param batches_per_epoch: Number of batches to run
-    :return: Successes, Failures and Losses
-    """
     net.eval()
 
     results = {
         'correct': 0,
         'failed': 0,
         'loss': 0,
-        'losses': {
-
-        }
+        'losses': {},
+        'avg_inference_time': 0.0,
     }
+
+    if len(val_data) == 0:
+        return results
 
     ld = len(val_data)
 
     with torch.no_grad():
         batch_idx = 0
+        total_inference_time = 0.0
+
         while batch_idx < batches_per_epoch:
             for x, y, didx, rot, zoom_factor in val_data:
                 batch_idx += 1
@@ -36,72 +35,71 @@ def validate(net, device, val_data, batches_per_epoch):
 
                 xc = x.to(device)
                 yc = [yy.to(device) for yy in y]
+
+                torch.cuda.synchronize()
+                start_time = time.perf_counter()
                 lossd = net.compute_loss(xc, yc)
+                torch.cuda.synchronize()
+                total_inference_time += time.perf_counter() - start_time
 
                 loss = lossd['loss']
 
-                results['loss'] += loss.item()/ld
+                results['loss'] += loss.item() / ld
                 for ln, l in lossd['losses'].items():
                     if ln not in results['losses']:
                         results['losses'][ln] = 0
-                    results['losses'][ln] += l.item()/ld
+                    results['losses'][ln] += l.item() / ld
 
-                q_out, ang_out, w_out = post_process_output(lossd['pred']['pos'], lossd['pred']['cos'],
-                                                            lossd['pred']['sin'], lossd['pred']['width'])
+                q_out, ang_out, w_out = post_process_output(
+                    lossd['pred']['pos'],
+                    lossd['pred']['cos'],
+                    lossd['pred']['sin'],
+                    lossd['pred']['width'],
+                )
+                success = evaluation.calculate_iou_match(
+                    q_out,
+                    ang_out,
+                    val_data.dataset.get_gtbb(didx, rot, zoom_factor),
+                    no_grasps=2,
+                    grasp_width=w_out,
+                )
 
-                s = evaluation.calculate_iou_match(q_out, ang_out,
-                                                   val_data.dataset.get_gtbb(didx, rot, zoom_factor),
-                                                   no_grasps=2,
-                                                   grasp_width=w_out,
-                                                   )
-
-
-
-
-                if s:
+                if success:
                     results['correct'] += 1
                 else:
                     results['failed'] += 1
+
+            if batches_per_epoch is None:
+                break
+
+        if batch_idx > 0:
+            results['avg_inference_time'] = total_inference_time / batch_idx
 
     return results
 
 
 def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=False):
-    """
-    Run one training epoch
-    :param epoch: Current epoch
-    :param net: Network
-    :param device: Torch device
-    :param train_data: Training Dataset
-    :param optimizer: Optimizer
-    :param batches_per_epoch:  Data batches to train on
-    :param vis:  Visualise training progress
-    :return:  Average Losses for Epoch
-    """
+    del vis
+
     results = {
         'loss': 0,
-        'losses': {
-        }
+        'losses': {},
     }
 
     net.train()
 
+    if len(train_data) == 0:
+        return results
+
     batch_idx = 0
-    # Use batches per epoch to make training on different sized datasets (cornell/jacquard) more equivalent.
     while batch_idx < batches_per_epoch:
         for x, y, _, _, _ in train_data:
-            # print("shape:",x.shape)
             batch_idx += 1
-            # if batch_idx >= batches_per_epoch:
-            #     break
-            # print("x_0:",x[0].shape,y[0][0].shape)
-            # plt.imshow(x[0].permute(1,2,0).numpy())
-            # plt.show()
-            # plt.imshow(y[0][0][0].numpy())
-            # plt.show()
+            if batches_per_epoch is not None and batch_idx >= batches_per_epoch:
+                break
+
             xc = x.to(device)
             yc = [yy.to(device) for yy in y]
-            # print("xc shape:",xc.shape)
             lossd = net.compute_loss(xc, yc)
 
             loss = lossd['loss']
@@ -119,20 +117,12 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
             loss.backward()
             optimizer.step()
 
-            # Display the images
-            if vis:
-                imgs = []
-                n_img = min(4, x.shape[0])
-                for idx in range(n_img):
-                    imgs.extend([x[idx,].numpy().squeeze()] + [yi[idx,].numpy().squeeze() for yi in y] + [
-                        x[idx,].numpy().squeeze()] + [pc[idx,].detach().cpu().numpy().squeeze() for pc in lossd['pred'].values()])
-                # gridshow('Display', imgs,
-                #          [(xc.min().item(), xc.max().item()), (0.0, 1.0), (0.0, 1.0), (-1.0, 1.0), (0.0, 1.0)] * 2 * n_img,
-                #          [cv2.COLORMAP_BONE] * 10 * n_img, 10)
-                # cv2.waitKey(2)
+        if batches_per_epoch is None:
+            break
 
-    results['loss'] /= batch_idx
-    for l in results['losses']:
-        results['losses'][l] /= batch_idx
+    if batch_idx > 0:
+        results['loss'] /= batch_idx
+        for ln in results['losses']:
+            results['losses'][ln] /= batch_idx
 
     return results

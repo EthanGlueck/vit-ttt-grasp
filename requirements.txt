@@ -7,4 +7,4 @@ torch
 torchvision
 torchsummary
 tensorboardX
-sklearn
+scikit-learn

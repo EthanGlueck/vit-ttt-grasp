@@ -7,7 +7,7 @@ plt.rcParams.update({
     "text.usetex": True,
     "font.family": "sans-serif",
     "font.sans-serif": ["Helvetica"]})
-matplotlib.use("TkAgg")
+matplotlib.use("Agg")
 counter=100
 def plot_output(rgb_img,rgb_img_1, depth_img, grasp_q_img, grasp_angle_img, no_grasps=1, grasp_width_img=None,
                 grasp_q_img_ggcnn=None,grasp_angle_img_ggcnn=None,grasp_width_img_ggcnn=None):
